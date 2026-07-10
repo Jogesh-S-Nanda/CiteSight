@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CiteSight PDF Search</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="CiteSight home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M7 5h12l6 6v16H7z"/><path d="M19 5v7h6M11 17h10M11 22h7"/></svg>
+        </span>
+        <span>CiteSight</span>
+      </a>
+      <span class="app-label">Local PDF Library</span>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="eyebrow">RESEARCH, ORGANIZED</p>
+        <h1>Find the right document.<br><span>Without the digging.</span></h1>
+        <p class="hero-copy">Index PDF titles and file locations across a folder and all its subfolders.</p>
+      </section>
+
+      <section class="workspace" aria-label="PDF search workspace">
+        <div class="index-panel">
+          <div class="section-heading">
+            <div>
+              <span class="step">01</span>
+              <h2>Choose your library</h2>
+            </div>
+            <span id="indexBadge" class="status-badge">Not indexed</span>
+          </div>
+
+          <form id="indexForm" class="folder-form">
+            <label for="folder">Folder path</label>
+            <div class="input-action-row">
+              <div class="input-wrap path-input">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 2h9v10H3z"/></svg>
+                <input id="folder" name="folder" value="{{ default_folder }}" autocomplete="off" required>
+              </div>
+              <button id="indexButton" class="button primary" type="submit">
+                <span>Index PDFs</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+            </div>
+            <p class="hint">The folder stays on this computer. Subfolders are included automatically.</p>
+          </form>
+        </div>
+
+        <div class="search-panel">
+          <div class="section-heading">
+            <div>
+              <span class="step">02</span>
+              <h2>Search the index</h2>
+            </div>
+            <button id="clearButton" class="text-button" type="button">Clear filters</button>
+          </div>
+
+          <form id="searchForm">
+            <label for="query">Search filename, title, or path</label>
+            <div class="input-action-row">
+              <div class="input-wrap search-input">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg>
+                <input id="query" name="query" placeholder="Try “robotics” or “haptic control”" disabled>
+              </div>
+              <button id="searchButton" class="button dark" type="submit" disabled>Search</button>
+            </div>
+
+            <details class="advanced-search">
+              <summary>Advanced filters <span>Optional</span></summary>
+              <div class="filter-grid">
+                <label>Filename<input name="file_name" placeholder="paper.pdf" disabled></label>
+                <label>Title<input name="title" placeholder="Document title" disabled></label>
+                <label>Path contains<input name="path" placeholder="research/2026" disabled></label>
+              </div>
+            </details>
+          </form>
+        </div>
+      </section>
+
+      <section class="results-section" aria-live="polite">
+        <div class="results-header">
+          <div>
+            <p class="eyebrow">YOUR LIBRARY</p>
+            <h2 id="resultsTitle">Ready when you are</h2>
+          </div>
+          <p id="resultsMeta"></p>
+        </div>
+
+        <div id="message" class="message" hidden></div>
+
+        <div id="emptyState" class="empty-state">
+          <div class="empty-illustration" aria-hidden="true">
+            <svg viewBox="0 0 120 100"><path d="M29 18h43l19 19v49H29z"/><path d="M72 18v20h19M43 52h33M43 64h25"/><circle cx="84" cy="72" r="17"/><path d="m96 84 12 12"/></svg>
+          </div>
+          <h3>Start by indexing a folder</h3>
+          <p>Your matching PDF documents will appear here.</p>
+        </div>
+
+        <div id="resultsList" class="results-list"></div>
+      </section>
+    </main>
+
+    <footer>
+      <span>CiteSight</span>
+      <span>Private, local document search</span>
+    </footer>
+  </div>
+
+  <template id="resultTemplate">
+    <article class="result-card">
+      <div class="pdf-icon">PDF</div>
+      <div class="result-content">
+        <h3 class="result-title"></h3>
+        <p class="result-file"></p>
+        <div class="path-row">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 2h9v10H3z"/></svg>
+          <span class="result-path"></span>
+        </div>
+      </div>
+      <button class="copy-button" type="button" aria-label="Copy full file path">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="1"/><path d="M16 8V5H5v11h3"/></svg>
+        <span>Copy path</span>
+      </button>
+    </article>
+  </template>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+</body>
+</html>
