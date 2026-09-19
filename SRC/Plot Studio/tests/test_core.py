@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from dataclasses import replace
 import unittest
 
 import matplotlib
@@ -14,6 +15,27 @@ from plotting import FIGURE_PRESETS, PLOT_TYPES, PlotConfig, create_figure, expo
 
 
 class CoreTests(unittest.TestCase):
+    def test_custom_legend_and_reference_annotations_export(self):
+        config = replace(self.config("Time series"), theme="Modern Research",
+                         legend_labels={"signal_a": "Controller A", "signal_b": "Controller B"},
+                         annotations=[
+                             {"Kind": "Horizontal line", "Start": "0.5", "Label": "Target"},
+                             {"Kind": "Vertical line", "Start": "2026-01-01 00:00:01", "Label": "Event"},
+                             {"Kind": "Horizontal band", "Start": "-0.2", "End": "0.2", "Opacity": 0.2},
+                             {"Kind": "Vertical band", "Start": "2026-01-01 00:00:02", "End": "2026-01-01 00:00:03", "Opacity": 0.15},
+                         ])
+        figure = create_figure(self.frame, config)
+        self.assertEqual(len(figure.axes[0].patches), 2)
+        names = [text.get_text() for text in figure.legends[0].get_texts()]
+        self.assertEqual(names, ["Controller A", "Controller B", "error", "Target", "Event"])
+        figure.canvas.draw()
+        renderer = figure.canvas.get_renderer()
+        self.assertLess(figure.legends[0].get_window_extent(renderer).y1,
+                        figure.axes[0].get_window_extent(renderer).y0)
+        svg = export_figure(figure, "svg")
+        self.assertIn(b"Controller A", svg)
+        self.assertIn(b"Target", svg)
+
     def test_cross_file_selection_preserves_samples_and_labels(self):
         first = pd.DataFrame({"x": [0, 0, 2], "signal": [10, 11, 12], "excluded": [99, 99, 99]})
         second = pd.DataFrame({"x": [0, 1, 2], "signal": [20, 21, 22]})

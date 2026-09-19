@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
 
 import matplotlib as mpl
@@ -34,6 +34,13 @@ FIGURE_PRESETS: dict[str, tuple[float, float]] = {
 }
 
 THEMES = {
+    "Modern Research": {
+        "colors": ["#2563EB", "#E76F51", "#089981", "#8B5CF6", "#D99A00", "#64748B"],
+        "font": "DejaVu Sans",
+        "grid": "#E2E8F0",
+        "face": "#FFFFFF",
+        "ink": "#243247",
+    },
     "IEEE Classic": {
         "colors": ["#0057A8", "#D1495B", "#00876C", "#7A5195", "#E07A1F", "#444444"],
         "font": "DejaVu Serif",
@@ -87,6 +94,9 @@ class PlotConfig:
     aggregation: str = "Mean"
     max_lag: int = 50
     sampling_rate: float = 0.0
+    legend_labels: dict[str, str] = field(default_factory=dict)
+    legend_columns: int = 2
+    annotations: list[dict] = field(default_factory=list)
 
 
 def numeric_columns(frame: pd.DataFrame, exclude: list[str] | None = None) -> list[str]:
@@ -185,7 +195,50 @@ def create_figure(frame: pd.DataFrame, config: PlotConfig) -> plt.Figure:
                 axis.grid(False)
             sns.despine(ax=axis, trim=False)
 
+        if config.plot_type != "Pair plot":
+            _add_annotations(axes[0], frame, config)
+            handles, names = axes[0].get_legend_handles_labels()
+            if config.show_legend and handles:
+                figure.legend(
+                    handles, [config.legend_labels.get(name, name) for name in names],
+                    title=config.legend_title or None, loc="outside lower center",
+                    ncol=config.legend_columns, frameon=False,
+                )
+
         return figure
+
+
+def _add_annotations(axis: plt.Axes, frame: pd.DataFrame, config: PlotConfig) -> None:
+    """Draw reference lines and translucent bands in the displayed axis units."""
+    time_x = config.plot_type in {"Time series", "Comparison plot"} or (
+        config.plot_type == "Scatter plot" and (config.x_column or config.timestamp_column) == config.timestamp_column
+    )
+    date_x = time_x and pd.api.types.is_datetime64_any_dtype(frame[config.timestamp_column])
+    for item in config.annotations:
+        kind = item["Kind"]
+        vertical = kind.startswith("Vertical")
+        def coordinate(value):
+            if vertical and date_x:
+                result = pd.Timestamp(value)
+                if pd.isna(result):
+                    raise ValueError("Enter a valid timestamp for vertical annotations.")
+                return result
+            result = float(value)
+            if not np.isfinite(result):
+                raise ValueError("Reference positions must be finite numbers.")
+            return result
+        start = coordinate(item["Start"])
+        color = item.get("Color") or "#64748B"
+        label = item.get("Label") or "_nolegend_"
+        if kind.endswith("band"):
+            end = coordinate(item["End"])
+            if end <= start:
+                raise ValueError("A shaded band's end must be greater than its start.")
+            draw = axis.axvspan if vertical else axis.axhspan
+            draw(start, end, color=color, alpha=float(item.get("Opacity", 0.15)), label=label, zorder=0)
+        else:
+            draw = axis.axvline if vertical else axis.axhline
+            draw(start, color=color, linestyle="--", linewidth=1.0, label=label)
 
 
 def _draw(axis: plt.Axes, frame: pd.DataFrame, data: pd.DataFrame, config: PlotConfig, theme: dict) -> None:
@@ -310,20 +363,13 @@ def _draw(axis: plt.Axes, frame: pd.DataFrame, data: pd.DataFrame, config: PlotC
         colorbar.ax.tick_params(labelsize=7)
         _labels(axis, config, "Time (s)", "Frequency (Hz)")
 
-    _legend(axis, config, labels, kind)
+    # The figure-level legend is added after reference lines and bands so it
+    # includes their optional labels and reserves space below the axes.
 
 
 def _labels(axis: plt.Axes, config: PlotConfig, default_x: str, default_y: str) -> None:
     axis.set_xlabel(config.x_label or default_x)
     axis.set_ylabel(config.y_label or default_y)
-
-
-def _legend(axis: plt.Axes, config: PlotConfig, labels: list[str], kind: str) -> None:
-    no_legend = {"Box plot", "Violin plot", "Summary bar chart", "Correlation heatmap", "Spectrogram"}
-    if config.show_legend and kind not in no_legend and len(labels) > 0:
-        handles, legend_labels = axis.get_legend_handles_labels()
-        if handles:
-            axis.legend(title=config.legend_title or None, loc="best")
 
 
 def _pair_plot(data: pd.DataFrame, figsize: tuple[float, float], config: PlotConfig) -> plt.Figure:

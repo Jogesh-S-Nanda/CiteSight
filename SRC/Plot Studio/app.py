@@ -16,6 +16,7 @@ from data_utils import (
 from plotting import (
     FIGURE_PRESETS,
     PLOT_TYPES,
+    THEMES,
     PlotConfig,
     create_figure,
     export_figure,
@@ -163,10 +164,46 @@ except ValueError as exc:
     st.info(str(exc))
     st.stop()
 
+plot_tab, data_tab = st.tabs(["Figure studio", "Data inspector"])
+original_columns = data.columns.tolist()
+# Keep aliases separate from widget state so deselecting a series does not
+# discard its name. Scope them to the uploaded files and worksheets.
+rename_scope = hashlib.sha256(repr(([(name, digest, sheet) for name, digest, sheet, _ in source_signature], alignment)).encode()).hexdigest()
+rename_key = f"column_names_{rename_scope}"
+aliases = st.session_state.get(rename_key, {})
+with data_tab:
+    with st.expander("Rename columns for all plots", expanded=True):
+        st.caption("Edit Plot name, then apply. Names are used in the table, plot axes, legends, and exports. Each name must be non-empty and unique.")
+        with st.form(f"rename_form_{rename_scope}"):
+            name_table = st.data_editor(
+                pd.DataFrame({"Original column": original_columns,
+                              "Plot name": [aliases.get(column, column) for column in original_columns]}),
+                disabled=["Original column"], hide_index=True, width="stretch",
+                key=f"rename_editor_{rename_scope}_{hashlib.sha256(repr(original_columns).encode()).hexdigest()}",
+                column_config={"Plot name": st.column_config.TextColumn("Plot name", required=True)},
+            )
+            apply_names = st.form_submit_button("Apply column names", on_click=clear_export_cache)
+        if apply_names:
+            names = [str(value).strip() if pd.notna(value) else "" for value in name_table["Plot name"]]
+            if not all(names):
+                st.error("Column names cannot be blank. The previous names are still in use.")
+            elif len(set(names)) != len(names):
+                st.error("Column names must be unique, including the time column. The previous names are still in use.")
+            else:
+                aliases = {**aliases, **dict(zip(original_columns, names))}
+                st.session_state[rename_key] = aliases
+                st.success("Column names applied to the table and all plots.")
+
+renamed_columns = [aliases.get(column, column) for column in original_columns]
+if len(set(renamed_columns)) != len(renamed_columns):
+    st.warning("The selected columns have conflicting saved names. Assign unique names in Data inspector to continue.")
+    st.stop()
+data = data.rename(columns=aliases)
+timestamp_column = aliases.get(timestamp_column, timestamp_column)
 selected_series = data.columns[1:].tolist()
 all_numeric = selected_series
 parse_note = "Selected columns from all files; missing matches are left empty without interpolation."
-st.caption(f"Plotting {len(selected_series)} selected series. Legends include the source file and column name.")
+st.caption(f"Plotting {len(selected_series)} selected series. Rename their labels in Data inspector.")
 
 with st.sidebar:
     st.divider()
@@ -201,7 +238,7 @@ with st.sidebar:
     st.subheader("3 · Publication style")
     theme = st.selectbox(
         "Theme",
-        ["IEEE Classic", "IEEE Grayscale", "Q1 Clean", "High Contrast"],
+        list(THEMES),
         on_change=clear_export_cache,
     )
     figure_preset = st.selectbox("Figure size", list(FIGURE_PRESETS), on_change=clear_export_cache)
@@ -209,6 +246,13 @@ with st.sidebar:
     x_label = st.text_input("X-axis label", value="", placeholder="Automatic", on_change=clear_export_cache)
     y_label = st.text_input("Y-axis label", value="", placeholder="Automatic", on_change=clear_export_cache)
     legend_title = st.text_input("Legend title", value="", placeholder="Optional", on_change=clear_export_cache)
+    legend_columns = st.number_input("Legend columns", min_value=1, max_value=6, value=2, on_change=clear_export_cache)
+    legend_labels = {}
+    with st.expander("Custom legend names"):
+        st.caption("Leave a name blank to use the original file and column label.")
+        for series in selected_series:
+            custom_name = st.text_input(series, key=f"legend_{series}", on_change=clear_export_cache)
+            legend_labels[series] = custom_name.strip() or series
 
     c1, c2 = st.columns(2)
     with c1:
@@ -223,7 +267,30 @@ with st.sidebar:
 
 filtered = data
 time_range_label = "All records"
-if pd.api.types.is_datetime64_any_dtype(data[timestamp_column]) and data[timestamp_column].notna().sum() > 1:
+date_axis = pd.api.types.is_datetime64_any_dtype(data[timestamp_column])
+numeric_axis = pd.api.types.is_numeric_dtype(data[timestamp_column])
+range_mode = st.selectbox("Time / sample range", ["All records", "Exact range", "Slider"] if date_axis else ["All records", "Exact range"])
+if range_mode == "Exact range" and (date_axis or numeric_axis):
+    left, right = st.columns(2)
+    range_key = hashlib.sha256(repr((source_signature, alignment)).encode()).hexdigest()
+    with left:
+        start_text = st.text_input("Range start", str(data[timestamp_column].min()), key=f"start_{range_key}",
+                                   help="Use a full date/time for timestamps, or a number for numeric time/sample indices.")
+    with right:
+        end_text = st.text_input("Range end", str(data[timestamp_column].max()), key=f"end_{range_key}")
+    try:
+        start = pd.Timestamp(start_text) if date_axis else float(start_text)
+        end = pd.Timestamp(end_text) if date_axis else float(end_text)
+        if pd.isna(start) or pd.isna(end) or start > end:
+            raise ValueError("Range start must be at or before range end.")
+        filtered = data.loc[data[timestamp_column].between(start, end, inclusive="both")]
+        time_range_label = f"{start} → {end}"
+    except (ValueError, TypeError) as exc:
+        st.error(f"Invalid range: {exc}")
+        st.stop()
+elif range_mode == "Exact range":
+    st.info("Use Sample index alignment to filter data whose first column is text.")
+elif range_mode == "Slider" and date_axis and data[timestamp_column].notna().sum() > 1:
     valid_times = data[timestamp_column].dropna()
     t_min, t_max = valid_times.min(), valid_times.max()
     if t_min < t_max:
@@ -238,6 +305,34 @@ if pd.api.types.is_datetime64_any_dtype(data[timestamp_column]) and data[timesta
         filtered = filter_rows_by_time(data, timestamp_column, selected_range[0], selected_range[1])
         time_range_label = f"{selected_range[0]:%Y-%m-%d %H:%M:%S} → {selected_range[1]:%Y-%m-%d %H:%M:%S}"
 
+annotations = []
+if plot_type != "Pair plot":
+    with st.expander("Reference lines and shaded bands"):
+        st.caption(
+            "Add rows for horizontal/vertical lines or faded bands. Start is the line position or band start; "
+            "End is used only for bands. Horizontal values use Y-axis units; vertical values use X-axis units "
+            "(full date/time for timestamp plots). Optional labels appear in the legend below the graph."
+        )
+        reference_rows = st.data_editor(
+            pd.DataFrame(columns=["Kind", "Start", "End", "Label", "Color", "Opacity"]),
+            num_rows="dynamic", key="reference_annotations", hide_index=True, width="stretch",
+            column_config={
+                "Kind": st.column_config.SelectboxColumn("Kind", options=["Horizontal line", "Vertical line", "Horizontal band", "Vertical band"], required=True, default="Horizontal line"),
+                "Start": st.column_config.TextColumn("Start", required=True),
+                "End": st.column_config.TextColumn("End"),
+                "Label": st.column_config.TextColumn("Legend label"),
+                "Color": st.column_config.TextColumn("Color", default="#64748B", help="A color name or hex value, e.g. #2563EB."),
+                "Opacity": st.column_config.NumberColumn("Band opacity", min_value=0.0, max_value=1.0, default=0.15, step=0.05),
+            },
+        )
+        for row in reference_rows.to_dict("records"):
+            item = {key: None if pd.isna(value) else value for key, value in row.items()}
+            if not item["Kind"] or not item["Start"] or (item["Kind"].endswith("band") and not item["End"]):
+                st.warning("Complete the kind, start, and (for bands) end before plotting.")
+                st.stop()
+            item["Opacity"] = 0.15 if item["Opacity"] is None else item["Opacity"]
+            annotations.append(item)
+
 st.markdown(
     f'<div class="metric-strip"><span class="metric-chip">{len(filtered):,} visible rows</span>'
     f'<span class="metric-chip">{len(data.columns)} columns</span>'
@@ -245,8 +340,6 @@ st.markdown(
     f'<span class="metric-chip">{time_range_label}</span></div>',
     unsafe_allow_html=True,
 )
-
-plot_tab, data_tab = st.tabs(["Figure studio", "Data inspector"])
 
 with data_tab:
     with st.container(border=True):
@@ -283,6 +376,9 @@ with plot_tab:
         x_label=x_label,
         y_label=y_label,
         legend_title=legend_title,
+        legend_labels=legend_labels,
+        legend_columns=int(legend_columns),
+        annotations=annotations,
         theme=theme,
         figure_preset=figure_preset,
         show_grid=show_grid,
